@@ -4,6 +4,7 @@ scra.py
 クローリング+スクレイピングを行うプログラム
 Created on Thu Jun  6 23:16:15 2019
 
+@author: hanano
 """
 
 import requests
