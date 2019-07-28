@@ -1,0 +1,304 @@
+# -*- coding: utf-8 -*-
+"""
+fish_cnn.py　
+自分で用意した魚画像のデータセットをVGG16で学習させてみる
+
+画像を読み込んで8：2の割合でtrain:testに
+trainのみを水増し
+imagenet　VGG16　ファインチューニング
+正解率と損失のグラフ化
+混同行列の表示
+
+Created on Tue Jun 25 21:57:48 2019
+
+@author: hanano
+"""
+
+
+from keras.preprocessing.image import ImageDataGenerator
+from sklearn.metrics import confusion_matrix
+from keras.callbacks import EarlyStopping
+from keras.preprocessing.image import img_to_array, load_img
+from keras.models import Model, Sequential
+from keras.layers import Dense, Dropout, Flatten, Input, BatchNormalization
+from keras.applications.vgg16 import VGG16
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.model_selection import train_test_split
+from keras import optimizers
+from keras.utils import np_utils
+import os
+import re
+import itertools
+import pandas as pd
+
+
+#サイズを指定
+im_rows = 224
+im_cols = 224
+im_color = 3
+in_shape = (im_rows,im_cols,im_color)
+nb_classes = 9
+
+
+#ImageDataGenerator と　画像を水増しする関数---------------------------------------#
+datagen = ImageDataGenerator(
+                            rotation_range=20,
+                            width_shift_range=0.01,
+                            height_shift_range=0.01,
+                            brightness_range=(0.5, 1.0),
+                            zoom_range=0.2,#拡大縮小
+                            shear_range=5,#せん断(引き伸ばし)
+                            channel_shift_range=5,
+                            horizontal_flip = True,
+                            vertical_flip = True
+                            )
+
+def images_gen(x_list,y_list):
+    output_dir = 'test'
+    x_list_add = []
+    y_list_add = []
+    if os.path.isdir(output_dir) == False:
+        os.mkdir(output_dir)
+    for x ,y in zip(x_list,y_list):#xは(3, width, height)で受け取る
+        x = x.reshape((1,) + x.shape)  #(1, 3, width, height)に変換する
+        
+        i = 0
+        for batch in datagen.flow(x, batch_size=32, save_to_dir=output_dir, save_prefix='img', save_format='jpg'):
+            batch = batch.astype(np.uint8)#データ型を揃える
+            batch = batch.reshape((224, 224, 3))
+            x_list_add.append(batch)
+            y_list_add.append(y)
+            i += 1
+            if i > 4:#１枚から5枚作る
+                break             
+    x_np_add = np.array(x_list_add)
+    y_np_add = np.array(y_list_add)
+    
+
+            
+    return x_np_add,y_np_add
+#------------------------------------------------------------------------------#
+
+
+
+
+#写真データを読み込みの関数--------------------------------------------------------#
+def list_pictures(directory, ext='jpg|jpeg|bmp|png|ppm'):
+    return [os.path.join(root, f)
+            for root, _, files in os.walk(directory) for f in files
+            if re.match(r'([\w]+\.(?:' + ext + '))', f.lower())]
+#------------------------------------------------------------------------------#
+    
+    
+
+X = []
+Y = []
+count = 0
+
+filelist = ["LateolabraxJaponicus_resize_224","LateolabraxLatus_resize_224","LateolabraxMaculatus_resize_224","ThunnusOrientalis_resize_224","ThunnusAlbacares_resize_224","ThunnusTonggol_resize_224","PagrusMajor_resize_224","EvynnisTumifrons_resize_224","DentexHypselosomusBleeker_resize_224"]
+for dir in filelist:
+    for picture in list_pictures(dir + '/'):
+        img = img_to_array(load_img(picture, target_size=(im_rows,im_cols)))
+        X.append(img)
+        Y.append(count)
+    count += 1
+
+
+# arrayに変換
+X = np.asarray(X)
+Y = np.asarray(Y)
+
+# 画素値を0から1の範囲に変換
+#X = X.astype('float32')
+#X = X / 255.0 #最大値で割ることでデータを正規化する
+
+# クラスの形式を変換
+Y = np_utils.to_categorical(Y, 9)
+
+# 学習用データとテストデータ
+X_train, X_test, y_train, y_test = train_test_split(X, Y, train_size=0.8, random_state=111)
+#inputtensorをかく
+
+
+#trainデータを水増しする
+X_train_add,y_train_add = images_gen(X_train,y_train)
+
+#水増しなし用
+#X_train = X_train.astype("float32")/255
+#X_test = X_test.astype("float32")/255
+
+
+X_train_add2 = np.concatenate([X_train_add, X_train], axis=0)
+
+y_train_add2 = np.concatenate([y_train_add, y_train], axis=0)
+
+X_train_add2 = X_train_add2.astype("float32")/255
+X_test = X_test.astype("float32")/255
+
+#ラベルデータをone-hotベクトルに直す
+#y_train_add = keras.utils.np_utils.to_categorical(y_train_add.astype("int32"),nb_classes)
+#y_test = keras.utils.np_utils.to_categorical(y_test.astype("int32"),nb_classes)
+
+print(X_train.shape)    
+print(y_train.shape)
+print(X_test.shape) 
+print(y_test.shape)
+print(X_train_add.shape)
+print(y_train_add.shape)
+print(X_train_add2.shape)
+print(y_train_add2.shape)
+
+
+
+
+
+input_tensor = Input(shape=(im_rows, im_cols, 3))
+
+# Fully-connected層（FC）はいらないのでinclude_top=False）
+# vgg16をファインチューニング
+# 最後の畳み込み層ブロックと全結合層のみ重みを再調整
+
+# functionalな書き方をする
+
+vgg16 = VGG16(include_top=False, weights='imagenet', input_tensor=input_tensor)
+
+top_model = Sequential()
+top_model.add(Flatten(input_shape=vgg16.output_shape[1:]))
+
+
+
+
+
+top_model.add(Dense(4096, activation='relu', kernel_initializer='he_normal'))
+#top_model.add(BatchNormalization())
+top_model.add(Dropout(0.5))
+top_model.add(Dense(9, activation='softmax'))
+
+# VGG16とFCを接続
+model = Model(inputs=vgg16.input, outputs=top_model(vgg16.output))
+for layer in model.layers[:15]: 
+    layer.trainable = False
+model.summary()
+
+#optimizer = optimizers.rmsprop(lr=5e-7, decay=5e-5)
+optimizer = optimizers.SGD(lr=1e-3, momentum=0.9)
+#optimizer = optimizers.Adam(lr=0.001, beta_1=0.9, beta_2=0.999, epsilon=None, decay=0.0, amsgrad=False)
+#optimizer = optimizers.Adam(lr=0.01)
+
+model.compile(loss='categorical_crossentropy',#多クラス分類なので
+              optimizer=optimizer,
+              metrics=['accuracy'])
+
+
+
+early_stopping = EarlyStopping(monitor='acc',min_delta=0.01, patience=10, verbose=1)
+
+hist=model.fit(X_train_add2,y_train_add2,
+              batch_size=32,
+              epochs=200,#nb_epochからepochsへ　https://qiita.com/cvusk/items/aa6270301ff2d14fb989
+              verbose=1,
+
+              callbacks=[early_stopping],
+              validation_split=0.1)
+
+
+#モデルを評価
+score=model.evaluate(X_test,y_test,verbose=1)
+print("正解率=",score[1],"loss=",score[0])
+
+
+num = 15 #何回目の施行か
+
+
+fig, (axL, axR) = plt.subplots(ncols=2, figsize=(10,4))
+
+# loss
+def plot_history_loss(fit):
+    # Plot the loss in the history
+    axL.plot(fit.history['loss'],label="loss for training")
+    axL.plot(fit.history['val_loss'],label="loss for validation")
+    axL.set_title('model loss')
+    axL.set_xlabel('epoch')
+    axL.set_ylabel('loss')
+    axL.legend(loc='upper right')
+    axL.text(20, 2, "test loss = %ls"%score[0], size = 10)
+
+
+def plot_history_acc(fit):
+    # Plot the loss in the history
+    axR.plot(fit.history['acc'],label="acc for training")
+    axR.plot(fit.history['val_acc'],label="acc for validation")
+    axR.set_title('model accuracy')
+    axR.set_xlabel('epoch')
+    axR.set_ylabel('accuracy')
+    axR.legend(loc='lower right')
+    axR.text(20, 0.3, "test acc = %ls"%score[1], size = 10)
+
+plot_history_loss(hist)
+plot_history_acc(hist)
+fig.savefig('result//lossacc%i.png'%num)
+plt.close()
+
+
+
+#混同行列を表示
+def plot_confusion_matrix(cm, classes,
+                          normalize=False,
+                          title='Confusion matrix',
+                          cmap=plt.cm.Blues):
+    """
+    This function prints and plots the confusion matrix.
+    Normalization can be applied by setting `normalize=True`.
+    """
+    if normalize:
+        cm = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis]
+        print("Normalized confusion matrix")
+    else:
+        print('Confusion matrix, without normalization')
+
+    print(cm)
+
+    plt.imshow(cm, interpolation='nearest', cmap=cmap)
+    plt.title(title)
+    plt.colorbar()
+    tick_marks = np.arange(len(classes))
+    plt.xticks(tick_marks, classes, rotation=45)
+    plt.yticks(tick_marks, classes)
+
+    fmt = '.2f' if normalize else 'd'
+    thresh = cm.max() / 2.
+    for i, j in itertools.product(range(cm.shape[0]), range(cm.shape[1])):
+        plt.text(j, i, format(cm[i, j], fmt),
+                 horizontalalignment="center",
+                 color="white" if cm[i, j] > thresh else "black")
+    #plt.figure(figsize=(10,10))
+    plt.ylabel('True label')
+    plt.xlabel('Predicted label')
+    plt.tight_layout()
+
+preds = model.predict(X_test).argmax(axis=1)
+cm = confusion_matrix(y_test.argmax(axis=1),preds)
+plt.figure(figsize=(6,5))
+plot_confusion_matrix(cm, classes=['0','1','2','3','4','5','6','7','8'], title='Confusion matrix, without normalization')
+plt.savefig('result//cm%i.png'%num)
+plt.figure(figsize=(6,5))
+plot_confusion_matrix(cm, classes=['0','1','2','3','4','5','6','7','8'], normalize=True,title='Normalized confusion matrix')
+plt.savefig('result//cm_norm%i.png'%num)
+
+
+#データフレーム型に変換
+labels = np.array(['LateolabraxJaponicus','LateolabraxLatus','LateolabraxMaculatus','ThunnusOrientalis','ThunnusAlbacares','ThunnusTonggol','PagrusMajor','EvynnisTumifrons','DentexHypselosomusBleeker'])
+cm_labeled = pd.DataFrame(cm, columns=labels, index=labels)
+cm_labeled.to_csv("result//cm_df%i.csv"%num)
+
+
+
+#学習モデルの保存
+json_string = model.to_json()
+#モデルのファイル名　拡張子.json
+open('result//fish_cnn3_%i.json'%num, 'w').write(json_string)
+#重みファイルの保存 拡張子がhdf5
+model.save_weights('result//fish_cnn3_%i.hdf5'%num)
+
+
