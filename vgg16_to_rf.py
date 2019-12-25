@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 vgg16_to_rf.py
-VGG16を特徴量として使ってみる
+VGG16を特徴量抽出器として使ってみる
 抽出した特徴量をrfで学習させる
 
 Created on Tue Jun 25 21:57:48 2019
